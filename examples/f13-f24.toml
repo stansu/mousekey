@@ -1,0 +1,9 @@
+# 用平常沒在用的 F13-F24（很多鍵盤只是沒印字，但照樣能送）
+[general]
+toggle_key = "CAPSLOCK"
+feedback = "beep"
+
+[keys]
+F13 = "side"
+F14 = "extra"
+F15 = "middle"

@@ -1,0 +1,52 @@
+# mousekey 設定範例
+#
+# 用法：複製成 config.toml 再改
+#   cp config.example.toml config.toml
+#
+# 不建立 config.toml 也可以，程式會用內建預設（就是下面這組）。
+# 修改後重新啟動 mousekey 生效（目前沒有熱重載）。
+
+[general]
+# 切換開／關的按鍵。這個鍵會被永遠吞掉，不會變成 Caps Lock。
+toggle_key = "CAPSLOCK"
+
+# true = 獨佔鍵盤（被對應到的鍵不會再打進視窗）
+# false = 只監聽、不獨佔（除錯用；按 F 會同時送出左鍵和字母 f）
+grab = true
+
+# 切換時的回饋：none / notify / beep / both
+feedback = "notify"
+
+# 滾輪：按住後第一次觸發要等多久，之後每隔多久再滾一格（毫秒）
+wheel_first_ms = 320
+wheel_repeat_ms = 70
+
+# 是否開一個 UNIX socket 讓人用 `mousekey --send toggle` 從外部切換
+control_socket = true
+
+[device]
+# 留空 = 自動抓所有「實體」鍵盤（虛擬裝置與被獨佔的會自動跳過）。
+#
+# 如果打字會變成雙字，代表同一把鍵盤有多條事件路徑都被抓了。
+# 用 `mousekey --probe` 按幾個鍵找出正確的那個，然後：
+#   match = ["/dev/input/event13"]
+# 也可以只寫名稱片段：
+#   match = ["AT Translated"]
+match = []
+
+# 按鍵 → 動作
+#   動作可以是：left / right / middle / side / extra
+#               double
+#               wheel_up / wheel_down / wheel_left / wheel_right
+# 按鍵名稱用 kernel 的 KEY_ 名稱（大小寫皆可，KEY_ 前綴可省略），也可以寫 keycode。
+# 查所有可用名稱： mousekey --keys | grep -i kp
+#
+# 語意：按下去 = 滑鼠鍵按下，放開 = 放開。
+#       所以「輕按」就是點一下，「按住」就是拖曳，不需要額外設定。
+[keys]
+F = "left"
+D = "right"
+S = "middle"
+A = "double"
+R = "wheel_up"
+V = "wheel_down"

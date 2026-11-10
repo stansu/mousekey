@@ -1,0 +1,12 @@
+# 左手放 home row，右手留著握滑鼠
+[general]
+toggle_key = "CAPSLOCK"
+feedback = "notify"
+
+[keys]
+J = "left"
+K = "right"
+L = "double"
+U = "wheel_up"
+I = "wheel_down"
+SEMICOLON = "middle"

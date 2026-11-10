@@ -1,0 +1,7 @@
+# 每台機器的個人設定（裝置路徑、按鍵對應都不同）
+config.toml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/

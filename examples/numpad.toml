@@ -1,0 +1,11 @@
+# 只把數字鍵盤變成滑鼠，一般打字完全不受影響
+[general]
+toggle_key = "SCROLLLOCK"
+feedback = "notify"
+
+[keys]
+KP7 = "left"
+KP9 = "right"
+KP8 = "middle"
+KP4 = "wheel_up"
+KP6 = "wheel_down"

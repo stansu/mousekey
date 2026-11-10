@@ -1,0 +1,19 @@
+[Unit]
+Description=mousekey — 用鍵盤按鍵取代滑鼠按鍵
+Documentation=file://%h/.local/bin/mousekey --help
+
+[Service]
+Type=simple
+# 需要先建立這個連結（見 README「安裝到 PATH」）：
+#   ln -sf <程式路徑>/mousekey.py %h/.local/bin/mousekey
+ExecStart=%h/.local/bin/mousekey
+Restart=on-failure
+RestartSec=2
+# 收到 SIGTERM 時會正常放開獨佔的鍵盤
+KillSignal=SIGTERM
+TimeoutStopSec=5
+
+[Install]
+# mousekey 是純 evdev/uinput，不需要圖形環境，
+# 所以跟著使用者管理員啟動就好，不必等 graphical-session.target。
+WantedBy=default.target
