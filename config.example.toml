@@ -24,6 +24,11 @@ wheel_repeat_ms = 70
 # 是否開一個 UNIX socket 讓人用 `mousekey --send toggle` 從外部切換
 control_socket = true
 
+# tap-hold：輕按切換鍵（預設 250ms 內放開）= 切換鎖定；按住 = 暫時生效，放開就回原狀。
+# 設成 false 就回到「按一下切換」的舊行為。
+tap_hold = true
+tap_ms = 250
+
 # 同一把鍵盤常有多條 event 路徑（例如 N-KEY + AT Translated），會送出重複按鍵。
 # 同一個鍵在幾毫秒內由「不同裝置」重複送來就只算一次。0 = 關閉
 dedup_ms = 10

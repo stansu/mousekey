@@ -67,8 +67,9 @@ class TestToggle(unittest.TestCase):
     def test_toggle_callback(self):
         seen = []
         e = mk.Engine(make_cfg(), on_toggle=seen.append)
-        press(e, "CAPSLOCK")
-        press(e, "CAPSLOCK")
+        for _ in range(2):                       # 輕按兩次 = 開、關
+            press(e, "CAPSLOCK")
+            release(e, "CAPSLOCK")
         self.assertEqual(seen, [True, False])
 
 
@@ -123,9 +124,13 @@ class TestButtons(unittest.TestCase):
         self.assertEqual(kbd, [(mk.EV_KEY, K["F"], 0)])
 
     def test_disable_releases_held_button(self):
+        # 先輕按鎖定，再按住左鍵，最後再輕按關閉 → 左鍵要自動放開
+        press(self.e, "CAPSLOCK")
+        release(self.e, "CAPSLOCK")
         press(self.e, "F")
-        kbd, mouse = press(self.e, "CAPSLOCK")
-        self.assertEqual(kinds(mouse), [(mk.EV_KEY, mk.BTN_LEFT, 0)])
+        _, m1 = press(self.e, "CAPSLOCK")
+        _, m2 = release(self.e, "CAPSLOCK")
+        self.assertEqual(kinds(m1 + m2), [(mk.EV_KEY, mk.BTN_LEFT, 0)])
 
     def test_unmapped_key_still_works_while_enabled(self):
         kbd, _ = press(self.e, "G")
@@ -253,3 +258,64 @@ class TestDeviceSelection(unittest.TestCase):
         cfg.match = ["/dev/input/event25"]
         picked, _ = mk.select_devices(cfg)
         self.assertEqual(len(picked), 1)
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+
+class TestTapHold(unittest.TestCase):
+    """輕按 = 鎖定切換；按住 = 暫時生效，放開就回原狀。"""
+
+    def setUp(self):
+        self.clock = FakeClock()
+        self._orig = mk.time.monotonic
+        mk.time.monotonic = self.clock
+        self.e = mk.Engine(make_cfg(tap_hold=True, tap_ms=250))
+
+    def tearDown(self):
+        mk.time.monotonic = self._orig
+
+    def tap(self, hold=0.05):
+        press(self.e, "CAPSLOCK")
+        self.clock.t += hold
+        return release(self.e, "CAPSLOCK")
+
+    def test_tap_locks_on(self):
+        press(self.e, "CAPSLOCK")
+        self.assertTrue(self.e.enabled)      # 按下立刻生效
+        self.clock.t += 0.1
+        release(self.e, "CAPSLOCK")
+        self.assertTrue(self.e.enabled)      # 輕按 → 鎖定
+
+    def test_hold_is_momentary(self):
+        press(self.e, "CAPSLOCK")
+        self.assertTrue(self.e.enabled)
+        self.clock.t += 0.5
+        release(self.e, "CAPSLOCK")
+        self.assertFalse(self.e.enabled)     # 長按 → 放開就回原狀
+
+    def test_tap_twice_turns_off(self):
+        self.tap()
+        self.assertTrue(self.e.enabled)
+        self.clock.t += 0.1
+        self.tap()
+        self.assertFalse(self.e.enabled)
+
+    def test_hold_while_locked_stays_locked(self):
+        self.tap()
+        self.clock.t += 0.1
+        self.tap(hold=1.0)
+        self.assertTrue(self.e.enabled)
+
+    def test_disabled_tap_hold_keeps_old_behavior(self):
+        e = mk.Engine(make_cfg(tap_hold=False))
+        press(e, "CAPSLOCK")
+        self.assertTrue(e.enabled)
+        self.clock.t += 1.0
+        release(e, "CAPSLOCK")
+        self.assertTrue(e.enabled)           # 關掉 tap-hold 就是單純切換

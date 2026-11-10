@@ -425,6 +425,9 @@ class Config:
         self.dedup_ms = int(g.get("dedup_ms", 10))
         self.wheel_repeat_ms = int(g.get("wheel_repeat_ms", 70))
         self.control_socket = bool(g.get("control_socket", True))
+        # tap-hold：輕按切換鍵 = 鎖定開關；按住 = 暫時生效，放開就回原狀
+        self.tap_hold = bool(g.get("tap_hold", True))
+        self.tap_ms = int(g.get("tap_ms", 250))
 
         match = d.get("match", []) or []
         if isinstance(match, str):
@@ -450,6 +453,7 @@ class Config:
             f"切換鍵      : {key_name(self.toggle_key)}",
             f"獨佔鍵盤    : {self.grab}",
             f"回饋        : {self.feedback}",
+            f"tap-hold    : {'開（輕按 %.0fms 內=切換，按住=暫時）' % self.tap_ms if self.tap_hold else '關'}",
             f"滾輪        : 首次 {self.wheel_first_ms}ms，之後每 {self.wheel_repeat_ms}ms",
             "按鍵對應    :",
         ]
@@ -489,6 +493,9 @@ class Engine:
         self.held: dict[int, str] = {}
         self.wheels: dict[int, list[float]] = {}
         self.forwarded_down: set[int] = set()
+        self.locked = False          # 輕按切換後鎖定的狀態
+        self.momentary = False       # 按住切換鍵時的暫時狀態
+        self.toggle_pressed_at: float | None = None
         self.on_toggle = on_toggle or (lambda on: None)
 
     # -- 對外接口 --------------------------------------------------------
@@ -511,8 +518,7 @@ class Engine:
 
         # 切換鍵：永遠吞掉，不會變成 Caps Lock
         if code == self.cfg.toggle_key:
-            if value == 1:
-                self.set_enabled(not self.enabled, mouse)
+            self._handle_toggle_key(value, mouse)
             return kbd, mouse
 
         if value != 2 and self._panic_combo(code, value):
@@ -542,6 +548,30 @@ class Engine:
         else:
             self._end(code, action, mouse)
         return kbd, mouse
+
+    def _handle_toggle_key(self, value: int, mouse: list) -> None:
+        if not self.cfg.tap_hold:
+            if value == 1:
+                self.set_enabled(not self.enabled, mouse)
+            return
+
+        if value == 1:
+            # 先當成「按住」立刻生效，放開時再決定是輕按還是長按
+            self.toggle_pressed_at = time.monotonic()
+            self.momentary = True
+            self._sync(mouse)
+        elif value == 0:
+            started = self.toggle_pressed_at
+            self.toggle_pressed_at = None
+            self.momentary = False
+            if started is not None and (time.monotonic() - started) * 1000 < self.cfg.tap_ms:
+                self.locked = not self.locked     # 輕按 = 切換鎖定
+            self._sync(mouse)
+
+    def _sync(self, mouse: list) -> None:
+        want = self.locked or self.momentary
+        if want != self.enabled:
+            self.set_enabled(want, mouse)
 
     def tick(self, now: float) -> list[tuple[int, int, int]]:
         """滾輪的連續觸發。"""

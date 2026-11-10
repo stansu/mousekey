@@ -120,6 +120,20 @@ CapsLock          → 回到打字模式
 Ctrl+Alt+Shift+Esc → 強制結束
 ```
 
+`CapsLock` 有兩種用法（tap-hold）：
+
+| 動作 | 結果 |
+|---|---|
+| **輕按**（250ms 內放開） | 切換鎖定，一直保持到你下次輕按 |
+| **按住不放** | 暫時生效，放開就回到打字模式 |
+
+所以「點幾下就關掉」和「按住用一下」都順手。只想保留單純切換的話：
+
+```toml
+[general]
+tap_hold = false
+```
+
 搭配 niri 快捷鍵（可選，`config.kdl`）：
 
 ```kdl
@@ -348,6 +362,8 @@ feedback = "notify"         # none / notify / beep / both
 wheel_first_ms = 320        # 滾輪第一次觸發前的延遲
 wheel_repeat_ms = 70        # 之後的間隔
 control_socket = true       # 允許 --send 指令
+tap_hold = true             # 輕按=切換、按住=暫時；false 就只剩切換
+tap_ms = 250                # 輕按的判定時間（毫秒）
 
 [device]
 match = []                  # 空 = 所有鍵盤；也可寫 ["AT Translated"] 或 ["/dev/input/event4"]
@@ -420,6 +436,30 @@ Wayland 下**沒有任何**「全域鍵盤 hook」API —— 這是安全設計�
 | 打字變得怪怪的 | `grab = true` 時所有鍵都會繞過虛擬鍵盤，延遲約 1–3ms，正常 |
 | 打一個字出現兩次 | 同一把鍵盤被抓了兩條路徑 → `--probe` 找出正確的那個，用 `[device] match` 限定 |
 | `Device or resource busy` | 裝置被 input-remapper / keyd 獨佔了 → 停用其中一個 |
+| 群組加了、`id` 有 input，但服務仍說沒有 | 見下方「Silverblue / ostree 的群組陷阱」 |
+
+### Silverblue / ostree 的群組陷阱
+
+這類系統的 `input` 群組由 `systemd-sysusers` 提供，**`/etc/group` 裡可能沒有這一行**。
+結果是三個工具各看各的，永遠對不起來：
+
+| 工具 | 它看哪裡 | 結果 |
+|---|---|---|
+| `groupadd` | NSS（`nsswitch`） | 「已經存在」→ 不動 |
+| `gpasswd` / `usermod` | 只認 `/etc/group` | 「不存在」→ 不動（但 `usermod` 會回報成功） |
+| `id` | 目前 process 的憑證 | 可能被 `newgrp` 誤導 |
+
+修法是把那行直接補進檔案：
+
+```bash
+printf 'input:x:104:\n' | sudo tee -a /etc/group   # gid 用 getent group input 查到的
+sudo gpasswd -a "$USER" input
+id -nG "$USER"                                      # 要看到 input
+```
+
+之後**重新登入**（`systemctl --user` 是登入時啟動的，帶著當時的群組）。
+
+`./setup-permissions.sh` 現在會自動處理這個情況。
 
 除錯時很有用：
 
@@ -437,14 +477,14 @@ Wayland 下**沒有任何**「全域鍵盤 hook」API —— 這是安全設計�
 python3 -m unittest discover -s tests -v
 ```
 
-27 個測試，涵蓋狀態機、切換、拖曳、滾輪、孤兒事件、控制 socket 與完整主迴圈
+33 個測試，涵蓋狀態機、tap-hold、拖曳、滾輪、孤兒事件、熱插拔、控制 socket 與完整主迴圈
 （用假裝置，不需要真的鍵盤或 `/dev/uinput`）。
 
 ---
 
 ## 之後可以加
 
-- [ ] **tap-hold**：`CapsLock` 輕按 = 鎖定切換、按住 = 暫時生效（kanata 風格）
+- [x] ~~**tap-hold**：`CapsLock` 輕按 = 鎖定切換、按住 = 暫時生效~~
 - [ ] 設定檔熱重載
 - [ ] Windows 後端（`WH_KEYBOARD_LL` + `SendInput`，可做成單一免安裝 exe）
 - [ ] Rust 重寫成單一 static binary
