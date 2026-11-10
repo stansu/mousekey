@@ -1,6 +1,6 @@
 [Unit]
 Description=mousekey — 用鍵盤按鍵取代滑鼠按鍵
-Documentation=file://%h/.local/bin/mousekey --help
+Documentation=https://github.com/stansu/mousekey
 
 [Service]
 Type=simple
