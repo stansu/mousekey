@@ -51,7 +51,14 @@ sudo udevadm trigger --name-match=uinput 2>/dev/null || true
 say "把 $USER 加入 input 群組"
 # 注意：這裡要查「群組資料庫」，不是查目前 shell 的群組。
 # 目前 shell 的群組要重新登入才會更新，拿它判斷會永遠誤判成「還沒加入」。
-in_db()  { getent group input 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -qx "$USER"; }
+# 直接讀 /etc/group（usermod 就是改這個檔），避免 NSS 快取造成誤判
+in_db() {
+    if grep -q '^input:' /etc/group 2>/dev/null; then
+        grep '^input:' /etc/group | cut -d: -f4 | tr ',' '\n' | grep -qx "$USER"
+    else
+        getent group input 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -qx "$USER"
+    fi
+}
 in_now() { id -nG | tr ' ' '\n' | grep -qx input; }
 
 if in_now; then
@@ -59,9 +66,24 @@ if in_now; then
 elif in_db; then
     ok "$USER 已經在 input 群組裡（只是這個 shell 還沒套用）"
 else
-    sudo usermod -aG input "$USER"
-    ok "已把 $USER 加入 input 群組"
+    sudo usermod -aG input "$USER" || true
+    sleep 0.2
+    if ! in_db; then
+        warn "usermod 沒有生效，改用 gpasswd 再試一次"
+        sudo gpasswd -a "$USER" input || true
+        sleep 0.2
+    fi
+    if in_db; then
+        ok "已把 $USER 加入 input 群組"
+    else
+        warn "兩種方式都沒把 $USER 寫進 input 群組（下面會印出實際內容）"
+    fi
 fi
+
+say "群組資料庫現在的樣子（除錯用）"
+grep '^input:' /etc/group 2>/dev/null || echo "  /etc/group 裡沒有 input 這一行"
+echo "  getent → $(getent group input 2>/dev/null || echo '(查不到)')"
+echo "  目前 shell → $(id -nG)"
 
 say "立即套用 /dev/uinput 權限（不等重新登入）"
 sudo chgrp input /dev/uinput 2>/dev/null || true
@@ -80,7 +102,9 @@ else
         echo "     → 群組已設定，只是這個 shell 還沒套用。不用登出，執行："
         echo "         newgrp input"
     elif ! in_db; then
-        echo "     → 連群組資料庫都沒有 $USER，請檢查上面的 sudo usermod 有沒有出錯"
+        echo "     → /etc/group 裡沒有 $USER。手動執行："
+        echo "         sudo gpasswd -a $USER input"
+        echo "         grep '^input:' /etc/group      # 應該看到 input:x:NNN:$USER"
     fi
 fi
 
