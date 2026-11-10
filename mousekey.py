@@ -1071,16 +1071,11 @@ def run(cfg: Config, dry_run: bool = False, verbose: bool = False) -> int:
     for note in notes:
         print(note, file=sys.stderr)
 
-    if not sources and not cfg.match:
-        print("找不到可用的鍵盤裝置。", file=sys.stderr)
+    if not sources:
+        print("目前沒有可用的鍵盤裝置 —— 會持續等待（Ctrl+C 結束）。", file=sys.stderr)
         for line in permission_diagnosis():
             print(f"  • {line}", file=sys.stderr)
         print("  • 也可以先跑 ./mousekey.py --list-devices 看看", file=sys.stderr)
-        return 2
-    if not sources:
-        print("目前找不到符合條件的裝置，會持續等待它出現…", file=sys.stderr)
-        for line in permission_diagnosis():
-            print(f"  • {line}", file=sys.stderr)
 
     if verbose:
         for dev in sources:
