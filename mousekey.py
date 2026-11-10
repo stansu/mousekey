@@ -699,6 +699,25 @@ def cmd_list_keys() -> int:
     return 0
 
 
+def process_identity() -> str:
+    """service 與前景執行的權限差在哪，看這行最快。"""
+    import grp
+    import pwd
+
+    try:
+        pw = pwd.getpwuid(os.getuid())
+        who = f"{pw.pw_name} (uid {pw.pw_uid}, gid {pw.pw_gid})"
+    except KeyError:
+        who = f"uid {os.getuid()}, gid {os.getgid()}"
+    names = []
+    for gid in os.getgroups():
+        try:
+            names.append(grp.getgrgid(gid).gr_name)
+        except KeyError:
+            names.append(str(gid))
+    return f"{who}　groups: {', '.join(names)}"
+
+
 def permission_diagnosis() -> list[str]:
     """告訴使用者到底卡在哪一步，而不是只說「沒有權限」。"""
     if not glob.glob("/dev/input/event*"):
@@ -1072,10 +1091,15 @@ def run(cfg: Config, dry_run: bool = False, verbose: bool = False) -> int:
         print(note, file=sys.stderr)
 
     if not sources:
-        print("目前沒有可用的鍵盤裝置 —— 會持續等待（Ctrl+C 結束）。", file=sys.stderr)
+        paths = glob.glob("/dev/input/event*")
+        print(
+            f"目前沒有可用的鍵盤裝置（掃到 {len(paths)} 個 /dev/input 節點）"
+            " —— 會持續等待（Ctrl+C 結束）。",
+            file=sys.stderr,
+        )
+        print(f"  身分：{process_identity()}", file=sys.stderr)
         for line in permission_diagnosis():
             print(f"  • {line}", file=sys.stderr)
-        print("  • 也可以先跑 ./mousekey.py --list-devices 看看", file=sys.stderr)
 
     if verbose:
         for dev in sources:

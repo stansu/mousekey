@@ -51,14 +51,9 @@ sudo udevadm trigger --name-match=uinput 2>/dev/null || true
 say "把 $USER 加入 input 群組"
 # 注意：這裡要查「群組資料庫」，不是查目前 shell 的群組。
 # 目前 shell 的群組要重新登入才會更新，拿它判斷會永遠誤判成「還沒加入」。
-# 直接讀 /etc/group（usermod 就是改這個檔），避免 NSS 快取造成誤判
-in_db() {
-    if grep -q '^input:' /etc/group 2>/dev/null; then
-        grep '^input:' /etc/group | cut -d: -f4 | tr ',' '\n' | grep -qx "$USER"
-    else
-        getent group input 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -qx "$USER"
-    fi
-}
+# 用「NSS 查到的結果」判斷：/etc/group 可能沒有這一行，
+# 群組是由 systemd-sysusers（Silverblue）或 sssd 提供的，直接讀檔案會誤判。
+in_db() { id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx input; }
 in_now() { id -nG | tr ' ' '\n' | grep -qx input; }
 
 if in_now; then
@@ -81,8 +76,9 @@ else
 fi
 
 say "群組資料庫現在的樣子（除錯用）"
-grep '^input:' /etc/group 2>/dev/null || echo "  /etc/group 裡沒有 input 這一行"
+grep '^input:' /etc/group 2>/dev/null || echo "  /etc/group 裡沒有 input 這一行（由 NSS/sysusers 提供，正常的）"
 echo "  getent → $(getent group input 2>/dev/null || echo '(查不到)')"
+echo "  $USER 的群組 → $(id -nG "$USER" 2>/dev/null || echo '?')"
 echo "  目前 shell → $(id -nG)"
 
 say "立即套用 /dev/uinput 權限（不等重新登入）"
