@@ -617,14 +617,20 @@ def _double_click() -> list[tuple[int, int, int]]:
 # 裝置探索
 # --------------------------------------------------------------------------
 
+ENUM_ERRORS: list[tuple[str, str]] = []
+
+
 def enumerate_devices() -> list[InputDevice]:
     found = []
+    ENUM_ERRORS.clear()
     for path in sorted(glob.glob("/dev/input/event*")):
         try:
             dev = InputDevice.open(path)
         except PermissionError:
+            ENUM_ERRORS.append((path, "Permission denied"))
             continue
-        except OSError:
+        except OSError as exc:
+            ENUM_ERRORS.append((path, exc.strerror or str(exc)))
             continue
         if dev.name.startswith("mousekey"):
             dev.close()
@@ -1098,6 +1104,12 @@ def run(cfg: Config, dry_run: bool = False, verbose: bool = False) -> int:
             file=sys.stderr,
         )
         print(f"  身分：{process_identity()}", file=sys.stderr)
+        if ENUM_ERRORS:
+            shown = "、".join(f"{os.path.basename(p)}({e})" for p, e in ENUM_ERRORS[:3])
+            print(
+                f"  {len(ENUM_ERRORS)} 個節點打不開，例如：{shown}",
+                file=sys.stderr,
+            )
         for line in permission_diagnosis():
             print(f"  • {line}", file=sys.stderr)
 
