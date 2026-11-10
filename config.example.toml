@@ -24,14 +24,19 @@ wheel_repeat_ms = 70
 # 是否開一個 UNIX socket 讓人用 `mousekey --send toggle` 從外部切換
 control_socket = true
 
+# 同一把鍵盤常有多條 event 路徑（例如 N-KEY + AT Translated），會送出重複按鍵。
+# 同一個鍵在幾毫秒內由「不同裝置」重複送來就只算一次。0 = 關閉
+dedup_ms = 10
+
 [device]
 # 留空 = 自動抓所有「實體」鍵盤（虛擬裝置與被獨佔的會自動跳過）。
 #
-# 如果打字會變成雙字，代表同一把鍵盤有多條事件路徑都被抓了。
-# 用 `mousekey --probe` 按幾個鍵找出正確的那個，然後：
-#   match = ["/dev/input/event13"]
-# 也可以只寫名稱片段：
+# 建議留空。/dev/input/eventN 的編號在拔插 USB 或重開機後會變，
+# 綁死路徑的話，拔掉滑鼠就可能指到別的裝置（症狀：完全沒反應）。
+#
+# 真要限定，用「名稱片段」而不是路徑：
 #   match = ["AT Translated"]
+# 名稱可以用 `mousekey --probe` 查到。
 match = []
 
 # 按鍵 → 動作

@@ -220,3 +220,74 @@ class TestSkipBusy(unittest.TestCase):
             tmp.cleanup()
         self.assertEqual(result, [0])
         self.assertTrue(busy_check)
+
+
+class TestHotplug(unittest.TestCase):
+    """拔掉再插回來要能自動接手（原本只掃一次，拔掉就再也不理它了）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["XDG_RUNTIME_DIR"] = self.tmp.name
+        FakeUinput.instances = []
+        self.present = set()
+        self.made = {}
+        self._orig = (mk.select_devices, mk.UinputDevice, mk.InputDevice, mk.glob.glob, mk.ConfigError)
+
+        def fake_open(path):
+            if path not in self.present:
+                raise FileNotFoundError(path)
+            dev = self.made.get(path)
+            if dev is None or dev.fd is None:
+                dev = FakeDevice()
+                dev.path = path
+                dev.name = "Fake Keyboard"
+                self.made[path] = dev
+            return dev
+
+        class FakeInput:
+            open = staticmethod(fake_open)
+
+        mk.select_devices = lambda cfg: ([], [])
+        mk.UinputDevice = FakeUinput
+        mk.InputDevice = FakeInput
+        mk.glob.glob = lambda pattern: list(self.present)
+
+        self.cfg = mk.Config(
+            {
+                "general": {"feedback": "none", "control_socket": True},
+                "device": {"match": ["Fake Keyboard"]},
+                "keys": {"F": "left"},
+            },
+            "<test>",
+        )
+        self.thread = threading.Thread(target=lambda: mk.run(self.cfg), daemon=True)
+        self.thread.start()
+        for _ in range(300):
+            if os.path.exists(mk.runtime_path("sock")):
+                break
+            time.sleep(0.01)
+
+    def tearDown(self):
+        mk.select_devices, mk.UinputDevice, mk.InputDevice, mk.glob.glob, mk.ConfigError = self._orig
+        self.thread.join(timeout=3)
+        self.tmp.cleanup()
+
+    def wait_for(self, predicate, timeout=3.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if predicate():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_unplug_and_replug(self):
+        self.present.add("/dev/input/fake1")
+        self.assertTrue(self.wait_for(lambda: self.made.get("/dev/input/fake1") is not None
+                                      and self.made["/dev/input/fake1"].grabbed))
+        first = self.made["/dev/input/fake1"]
+
+        self.present.clear()                       # 拔掉
+        self.assertTrue(self.wait_for(lambda: not first.grabbed))
+
+        self.present.add("/dev/input/fake1")       # 插回來
+        self.assertTrue(self.wait_for(lambda: self.made["/dev/input/fake1"].grabbed))

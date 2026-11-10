@@ -420,6 +420,9 @@ class Config:
         self.grab = bool(g.get("grab", True))
         self.feedback = str(g.get("feedback", "notify"))
         self.wheel_first_ms = int(g.get("wheel_first_ms", 320))
+        # 同一把鍵盤常常有兩三條 event 路徑，會送出重複事件。
+        # 同一個鍵在這麼短的時間內由「不同裝置」重複送來，就只算一次。
+        self.dedup_ms = int(g.get("dedup_ms", 10))
         self.wheel_repeat_ms = int(g.get("wheel_repeat_ms", 70))
         self.control_socket = bool(g.get("control_socket", True))
 
@@ -630,6 +633,19 @@ def enumerate_devices() -> list[InputDevice]:
     return found
 
 
+def device_matches(cfg: Config, dev: InputDevice) -> bool:
+    """這個裝置該不該被抓？（select_devices 與執行中的重掃都用同一套規則）"""
+    if cfg.match:
+        for pat in cfg.match:
+            if pat.startswith("/"):
+                if dev.path == pat:
+                    return True
+            elif pat.lower() in dev.name.lower():
+                return True
+        return False
+    return dev.looks_like_keyboard and not dev.is_virtual
+
+
 def select_devices(cfg: Config) -> tuple[list[InputDevice], list[str]]:
     notes = []
     candidates = enumerate_devices()
@@ -637,16 +653,22 @@ def select_devices(cfg: Config) -> tuple[list[InputDevice], list[str]]:
     if cfg.match:
         picked = []
         for dev in candidates:
-            hit = False
-            for pat in cfg.match:
-                if pat.startswith("/"):
-                    hit = hit or dev.path == pat
-                else:
-                    hit = hit or pat.lower() in dev.name.lower()
-            if hit:
+            if device_matches(cfg, dev):
                 picked.append(dev)
             else:
                 dev.close()
+        if not picked:
+            notes.append(
+                "設定的裝置現在不存在：" + "、".join(cfg.match) + "\n"
+                "    /dev/input/eventN 的編號在拔插或重開機後會變，建議改用名稱片段，例如\n"
+                "      match = [\"AT Translated\"]\n"
+                "    用 ./mousekey.py --probe 可以查到正確名稱。"
+            )
+        for dev in picked:
+            if not dev.looks_like_keyboard:
+                notes.append(
+                    f"⚠ {dev.path}（{dev.name}）看起來不像鍵盤 —— 可能是編號跑掉了。"
+                )
         return picked, notes
 
     wrong = [d for d in candidates if not d.looks_like_keyboard]
@@ -824,9 +846,19 @@ def cmd_probe(seconds: float = 10.0) -> int:
         print(f"  {'':<21} 按過：{names}")
 
     best = rows[0][0]
-    print(f"\n最可能是這個： {best}  ({by_path.get(best, '?')})")
-    print("把它寫進 config.toml 就只會抓這一個：\n")
-    print(f'  [device]\n  match = ["{best}"]')
+    best_name = by_path.get(best, "?")
+    print(f"\n最可能是這個： {best}  ({best_name})")
+
+    shared = [p for p, codes in rows[1:] if set(codes) & set(rows[0][1])]
+    if shared:
+        print("⚠ 有另一個裝置也收到同一批按鍵（同一把鍵盤的多條路徑）。")
+        print("  只挑一個，否則按一下會變成兩下：")
+        for p in shared:
+            print(f"    {p}  {by_path.get(p, '?')}")
+
+    print("\n把它寫進 config.toml（用名稱，跨重開機也有效）：\n")
+    print(f'  [device]\n  match = ["{best_name}"]')
+    print("\n注意：不要用 /dev/input/eventN，拔插或重開機後編號會變。")
     return 0
 
 
@@ -1039,15 +1071,16 @@ def run(cfg: Config, dry_run: bool = False, verbose: bool = False) -> int:
     for note in notes:
         print(note, file=sys.stderr)
 
-    if not sources:
-        print(
-            "找不到可用的鍵盤裝置。",
-            file=sys.stderr,
-        )
+    if not sources and not cfg.match:
+        print("找不到可用的鍵盤裝置。", file=sys.stderr)
         for line in permission_diagnosis():
             print(f"  • {line}", file=sys.stderr)
         print("  • 也可以先跑 ./mousekey.py --list-devices 看看", file=sys.stderr)
         return 2
+    if not sources:
+        print("目前找不到符合條件的裝置，會持續等待它出現…", file=sys.stderr)
+        for line in permission_diagnosis():
+            print(f"  • {line}", file=sys.stderr)
 
     if verbose:
         for dev in sources:
@@ -1055,9 +1088,8 @@ def run(cfg: Config, dry_run: bool = False, verbose: bool = False) -> int:
 
     kbd_out = mouse_out = None
     if not dry_run:
-        all_keys: set[int] = set()
-        for dev in sources:
-            all_keys |= {k for k in dev.keys if k not in BTN_RANGE}
+        # 直接宣告「所有」非滑鼠鍵，這樣之後熱插拔的新鍵盤也轉送得出去
+        all_keys = {k for k in range(1, KEY_MAX + 1) if k not in BTN_RANGE}
         try:
             kbd_out = UinputDevice("mousekey virtual keyboard", keys=all_keys, rels=set())
             mouse_out = UinputDevice(
@@ -1079,30 +1111,6 @@ def run(cfg: Config, dry_run: bool = False, verbose: bool = False) -> int:
 
     engine = Engine(cfg, on_toggle=lambda on: _toggle_side_effects(cfg, on, verbose))
 
-    if not dry_run and cfg.grab:
-        grabbed = []
-        for dev in sources:
-            try:
-                dev.grab(True)
-                grabbed.append(dev)
-            except OSError as exc:
-                reason = "被其他程式獨佔" if exc.errno == errno.EBUSY else exc.strerror
-                print(
-                    f"略過 {dev.path}（{dev.name}）：{reason}",
-                    file=sys.stderr,
-                )
-                dev.close()
-        if not grabbed:
-            print(
-                "\n沒有任何裝置可以獨佔。若你正在用 input-remapper / keyd，"
-                "請先停用它，或改用它的設定來做（兩個工具會互搶裝置）。",
-                file=sys.stderr,
-            )
-            _cleanup([], kbd_out, mouse_out, None)
-            return 2
-        sources = grabbed
-        # 重新註冊只保留搶到的裝置（後面 sel 才會正確）
-
     write_state(False)
 
     ctrl = None
@@ -1116,10 +1124,67 @@ def run(cfg: Config, dry_run: bool = False, verbose: bool = False) -> int:
             print(f"（控制 socket 建立失敗，忽略：{exc}）", file=sys.stderr)
 
     sel = selectors.DefaultSelector()
-    for dev in sources:
-        sel.register(dev.fd, selectors.EVENT_READ, dev)
     if ctrl:
         sel.register(ctrl.sock, selectors.EVENT_READ, ctrl)
+
+    live: dict[str, "InputDevice"] = {}
+    # 已經判斷過「不是我們要的」的節點，避免每秒重開 50 個裝置
+    evaluated: set[str] = set()
+
+    def attach(dev: "InputDevice") -> bool:
+        if cfg.grab and not dry_run:
+            try:
+                dev.grab(True)
+            except OSError as exc:
+                reason = "被其他程式獨佔" if exc.errno == errno.EBUSY else exc.strerror
+                print(f"略過 {dev.path}（{dev.name}）：{reason}", file=sys.stderr)
+                dev.close()
+                return False
+        sel.register(dev.fd, selectors.EVENT_READ, dev)
+        live[dev.path] = dev
+        print(f"接手：{dev.path}  {dev.name}", flush=True)
+        return True
+
+    def detach(dev: "InputDevice") -> None:
+        live.pop(dev.path, None)
+        try:
+            sel.unregister(dev.fd)
+        except (KeyError, ValueError, OSError):
+            pass
+        dev.close()
+        print(f"裝置移除：{dev.path}  {dev.name}", file=sys.stderr, flush=True)
+
+    def rescan() -> None:
+        """裝置拔插後重新接手 —— 不重掃的話，拔掉滑鼠或鍵盤就再也不理它了。"""
+        present = set(glob.glob("/dev/input/event*"))
+        evaluated.intersection_update(present)   # 消失過的路徑要重新判斷
+        for path in list(live):
+            if path not in present:
+                detach(live[path])
+        for path in present - evaluated - set(live):
+            try:
+                dev = InputDevice.open(path)
+            except OSError:
+                evaluated.add(path)
+                continue
+            if dev.name.startswith("mousekey") or not device_matches(cfg, dev):
+                dev.close()
+                evaluated.add(path)
+                continue
+            # 被獨佔的裝置不標記，下一輪會再試（等其他程式放開）
+            if attach(dev):
+                evaluated.add(path)
+
+    for dev in sources:
+        attach(dev)
+    evaluated |= set(glob.glob("/dev/input/event*")) - set(live)
+
+    if not live and cfg.grab and not dry_run:
+        print(
+            "沒有任何裝置可以獨佔。若你正在用 input-remapper / keyd，"
+            "請先停用它（兩個工具會互搶裝置）；否則會持續等待。",
+            file=sys.stderr,
+        )
 
     stop = {"flag": False}
 
@@ -1134,6 +1199,11 @@ def run(cfg: Config, dry_run: bool = False, verbose: bool = False) -> int:
 
     if verbose:
         print("執行中…（Ctrl+Alt+Shift+Esc 或關閉終端結束）", flush=True)
+
+    next_scan = time.monotonic() + 1.0
+    warned_empty = bool(live)
+    window = max(0, cfg.dedup_ms) / 1000.0
+    last_seen: dict[tuple[int, int], tuple[str, float]] = {}
 
     try:
         while not stop["flag"] and not engine.quit:
@@ -1150,12 +1220,17 @@ def run(cfg: Config, dry_run: bool = False, verbose: bool = False) -> int:
                 try:
                     events = dev.read()
                 except OSError:
-                    events = None
-                if events is None:
-                    sel.unregister(dev.fd)
-                    dev.close()
+                    detach(dev)
                     continue
                 for evtype, code, value in events:
+                    if window and evtype == EV_KEY and value in (0, 1):
+                        key = (code, value)
+                        prev = last_seen.get(key)
+                        now_t = time.monotonic()
+                        if prev and prev[0] != dev.path and now_t - prev[1] < window:
+                            # 同一把鍵盤的另一條路徑，忽略這份重複
+                            continue
+                        last_seen[key] = (dev.path, now_t)
                     if TRACE and evtype == EV_KEY:
                         state = {0: "up", 1: "down", 2: "repeat"}.get(value, str(value))
                         print(f"  ← {dev.name}: {key_name(code)} {state}",
@@ -1163,16 +1238,27 @@ def run(cfg: Config, dry_run: bool = False, verbose: bool = False) -> int:
                     _pump(engine, kbd_out, mouse_out, evtype, code, value)
                     if engine.quit:
                         break
+
             now = time.monotonic()
             repeats = engine.tick(now)
             if repeats:
                 mouse_out.emit(repeats)
+
+            if now >= next_scan:
+                next_scan = now + 1.0
+                rescan()
+                if not live and warned_empty:
+                    print("目前沒有任何鍵盤被接手，等待裝置重新出現…",
+                          file=sys.stderr, flush=True)
+                    warned_empty = False
+                elif live:
+                    warned_empty = True
     finally:
         try:
             sel.close()
         except Exception:
             pass
-        _cleanup(sources, kbd_out, mouse_out, ctrl)
+        _cleanup(list(live.values()), kbd_out, mouse_out, ctrl)
 
     print("已結束。", flush=True)
     return 0
