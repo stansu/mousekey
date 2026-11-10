@@ -56,22 +56,38 @@ say "把 $USER 加入 input 群組"
 in_db() { id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx input; }
 in_now() { id -nG | tr ' ' '\n' | grep -qx input; }
 
+# Silverblue 上 input 群組常只存在於 NSS（systemd-sysusers），
+# /etc/group 沒有這一行，usermod/gpasswd 就會「成功但沒寫入」。
+ensure_group_entry() {
+    grep -q '^input:' /etc/group 2>/dev/null && return 0
+    local gid
+    gid=$(getent group input 2>/dev/null | cut -d: -f3)
+    if [ -n "$gid" ]; then
+        warn "/etc/group 沒有 input，補上（gid $gid）"
+        sudo groupadd -r -g "$gid" input || return 1
+    else
+        warn "/etc/group 沒有 input，也沒有現成的 gid，建立一個"
+        sudo groupadd -r input || return 1
+    fi
+}
+
 if in_now; then
     ok "目前這個 shell 已經有 input 權限"
 elif in_db; then
     ok "$USER 已經在 input 群組裡（只是這個 shell 還沒套用）"
 else
-    sudo usermod -aG input "$USER" || true
+    ensure_group_entry || warn "無法補上 /etc/group 的 input 那行"
+    sudo gpasswd -a "$USER" input || true
     sleep 0.2
     if ! in_db; then
-        warn "usermod 沒有生效，改用 gpasswd 再試一次"
-        sudo gpasswd -a "$USER" input || true
+        warn "gpasswd 沒生效，改用 usermod 再試一次"
+        sudo usermod -aG input "$USER" || true
         sleep 0.2
     fi
     if in_db; then
         ok "已把 $USER 加入 input 群組"
     else
-        warn "兩種方式都沒把 $USER 寫進 input 群組（下面會印出實際內容）"
+        warn "兩種方式都沒生效（下面會印出實際內容）"
     fi
 fi
 
