@@ -62,13 +62,15 @@ ensure_group_entry() {
     grep -q '^input:' /etc/group 2>/dev/null && return 0
     local gid
     gid=$(getent group input 2>/dev/null | cut -d: -f3)
-    if [ -n "$gid" ]; then
-        warn "/etc/group 沒有 input，補上（gid $gid）"
-        sudo groupadd -r -g "$gid" input || return 1
-    else
+    if [ -z "$gid" ]; then
         warn "/etc/group 沒有 input，也沒有現成的 gid，建立一個"
         sudo groupadd -r input || return 1
+        return 0
     fi
+    # groupadd 會說「已經存在」（走 NSS），gpasswd 又說「檔案裡沒有」，
+    # 這種情況下只能直接把那一行寫進 /etc/group。
+    warn "/etc/group 沒有 input 這一行（NSS 有，gid $gid）—— 直接補上"
+    printf 'input:x:%s:\n' "$gid" | sudo tee -a /etc/group >/dev/null || return 1
 }
 
 if in_now; then
